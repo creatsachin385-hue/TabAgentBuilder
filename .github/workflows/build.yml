@@ -1,74 +1,62 @@
 name: Build APK from Zip
-
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-
       - name: Extract zip
         run: |
           ZIP=$(find . -maxdepth 1 -name "*.zip" | head -1)
           unzip -o "$ZIP" -d extracted/
           INNER=$(find extracted -name "settings.gradle" | head -1 | xargs dirname)
-          mkdir -p project
-          cp -r "$INNER"/. project/
-
+          mkdir -p project && cp -r "$INNER"/. project/
       - name: Install Gradle 8.6
         run: |
           wget -q https://services.gradle.org/distributions/gradle-8.6-bin.zip -O gradle.zip
           unzip -q gradle.zip -d /opt/gradle
           echo "/opt/gradle/gradle-8.6/bin" >> $GITHUB_PATH
-
-      - name: Generate wrapper + fix gradle files
+      - name: Fix gradle + generate wrapper
         working-directory: project
         run: |
           gradle wrapper --gradle-version 8.6
           chmod +x gradlew
-
           cat > build.gradle << 'GRADLE'
-          buildscript {
-              ext { kotlin_version = '1.9.22'; compose_compiler = '1.5.10' }
-              repositories { google(); mavenCentral() }
-              dependencies {
-                  classpath 'com.android.tools.build:gradle:8.3.1'
-                  classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
-                  classpath "com.google.dagger:hilt-android-gradle-plugin:2.51"
-              }
-          }
-          allprojects { repositories { google(); mavenCentral(); maven { url 'https://jitpack.io' } } }
-          GRADLE
-
+buildscript {
+    ext { kotlin_version = '1.9.22'; compose_compiler = '1.5.10' }
+    repositories { google(); mavenCentral() }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.3.1'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        classpath "com.google.dagger:hilt-android-gradle-plugin:2.51"
+    }
+}
+task clean(type: Delete) { delete rootProject.buildDir }
+GRADLE
           cat > settings.gradle << 'SETTINGS'
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories { google(); mavenCentral(); maven { url 'https://jitpack.io' } }
-          }
-          rootProject.name = "TabAgent"
-          include ':app'
-          SETTINGS
-
+pluginManagement {
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
+    repositories { google(); mavenCentral(); maven { url 'https://jitpack.io' } }
+}
+rootProject.name = "TabAgent"
+include ':app'
+SETTINGS
       - name: Build Debug APK
         working-directory: project
         env:
           ANDROID_HOME: /usr/local/lib/android/sdk
         run: ./gradlew assembleDebug --stacktrace --no-daemon
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: TabAgent-APK
           path: project/app/build/outputs/apk/debug/app-debug.apk
